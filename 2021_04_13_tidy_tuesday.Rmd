@@ -1,0 +1,277 @@
+---
+title: "TidyTemplate"
+date: 2021-07-22
+output: html_output
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
+While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+theme_set(theme_light())
+
+```
+
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2021-04-13")
+
+tt %>%
+  map(glimpse)
+
+tt$post_offices %>%
+  add_count(name, orig_name, state, county1, sort = TRUE) %>%
+  filter(n >= 2) %>%
+  arrange(name, orig_name, state, county1)
+```
+
+
+
+
+# Wrangle
+
+```{r}
+
+post_offices <- tt$post_offices %>%
+  select(
+    name, state, county1, established, discontinued, continuous,
+    stamp_index, id, coordinates, latitude, longitude, gnis_dist,
+    gnis_county, gnis_state
+  ) %>%
+  filter(
+    established >= 1639,
+    is.na(discontinued) | discontinued >= established
+  )
+
+post_office_years <- post_offices %>%
+  select(
+    name, state, established, discontinued,
+    latitude, longitude
+  ) %>%
+  replace_na(list(discontinued = 2003)) %>%
+  filter(
+    established >= 1750,
+    discontinued <= 2021
+  ) %>%
+  mutate(year = map2(established, discontinued, seq)) %>%
+  unnest(year)
+# Helps to get the number of post offices in each year
+```
+
+```{r}
+post_office_years %>%
+  count(year, name = "n_post_offices") %>%
+  ggplot(aes(year, n_post_offices)) +
+  geom_area() +
+  labs(
+    x = "Year",
+    y = "Number of post offices currently active in the US"
+  )
+```
+
+```{r}
+post_offices_cumulative <- post_office_years %>%
+  count(year,
+    state = fct_lump(state, 16),
+    name = "n_post_offices"
+  )
+
+post_offices_cumulative %>%
+  mutate(state = fct_reorder(state, -n_post_offices, .fun = sum)) %>%
+  filter(state != "Other") %>%
+  ggplot(aes(year, n_post_offices, fill = state)) +
+  geom_area() +
+  labs(
+    x = "Year",
+    y = "Number of post offices currently active in the US"
+  ) +
+  facet_wrap(~state) +
+  theme(legend.position = "none")
+```
+
+```{r}
+post_offices %>%
+  filter(!is.na(discontinued)) %>%
+  count(state,
+    decade = 10 * (discontinued %/% 10),
+    name = "n_closure"
+  ) %>%
+  filter(state == "KY") %>%
+  ggplot(aes(decade, n_closure)) +
+  geom_area()
+```
+
+```{r}
+post_offices_closures <- post_offices %>%
+  filter(!is.na(discontinued)) %>%
+  filter(
+    established >= 1750,
+    discontinued >= 1750,
+    discontinued <= 2021
+  ) %>%
+  count(
+    state = fct_lump(state, 16),
+    decade = 10 * (discontinued %/% 10),
+    name = "n_closure"
+  )
+
+post_offices_closures %>%
+  mutate(state = fct_reorder(state, -n_closure, .fun = sum)) %>%
+  filter(state != "Other") %>%
+  ggplot(aes(decade, n_closure, fill = state)) +
+  geom_area() +
+  labs(
+    x = "Decade",
+    y = "Number of post offices closed in the US",
+    title = "When and where the most post offices closed?"
+  ) +
+  facet_wrap(~state) +
+  theme(legend.position = "none")
+```
+
+```{r}
+post_offices_closures %>%
+  filter(decade < 2000) %>%
+  inner_join(post_offices_cumulative, by = c("state", "decade" = "year")) %>%
+  mutate(pct_closed = n_closure / n_post_offices) %>%
+  filter(n_post_offices >= 50) %>%
+  filter(state %in% c("KY", "PA")) %>%
+  ggplot(aes(decade, pct_closed, color = state)) +
+  geom_line(size = 0.75) +
+  scale_y_continuous(labels = percent) +
+  labs(y = "% of post offices at the start of decade that closed")
+```
+
+### Maps
+
+# Choropleth(?) by state
+
+```{r}
+library(ggthemes)
+library(historydata)
+
+states_map <- map_data("state") %>%
+  as_tibble() %>%
+  mutate(state = state.abb[match(region, str_to_lower(state.name))]) %>%
+  replace_na(list(state = "DC"))
+
+# The following is a choropleth (i.e. a colored map)
+post_office_years %>%
+  filter(year == 2003) %>%
+  count(state, sort = TRUE) %>%
+  inner_join(states_map, by = "state") %>%
+  ggplot(aes(long, lat, group = group, fill = n)) +
+  geom_polygon() +
+  scale_fill_gradient2(low = "blue", high = "red", midpoint = 750) +
+  theme_map() +
+  labs(fill = "Number of post offices")
+
+state_pops <- us_state_populations %>%
+  mutate(state = state.abb[match(state, state.name)]) %>%
+  replace_na(list(state = "DC"))
+
+post_office_years %>%
+  filter(year == 2003) %>%
+  count(state, sort = TRUE) %>%
+  inner_join(state_pops %>% filter(year == 2000), by = "state") %>%
+  mutate(post_office_density = n / (population / 1e6)) %>%
+  inner_join(states_map, by = "state") %>%
+  ggplot(aes(long, lat, group = group, fill = post_office_density)) +
+  geom_polygon() +
+  scale_fill_gradient2(low = "blue", high = "red", midpoint = 250) +
+  theme_map() +
+  labs(fill = "Post offices per a million people")
+```
+
+```{r}
+post_offices_cumulative_all <- post_office_years %>%
+  count(year, state, name = "n_post_offices")
+
+by_state_year <- post_offices_cumulative_all %>%
+  left_join(state_pops, by = c("year", "state")) %>%
+  mutate(post_office_density = n_post_offices / (population / 1e6))
+
+by_state_year %>%
+  filter(year %in% c(1800, 1850, 1900, 1950)) %>%
+  inner_join(states_map, by = "state") %>%
+  ggplot(aes(long, lat, group = group, fill = n_post_offices)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "blue", high = "red",
+    mid = "pink",
+    midpoint = 2000
+  ) +
+  facet_wrap(~year) +
+  theme_map() +
+  labs(fill = "Post offices per a million people")
+```
+
+
+```{r}
+library(gganimate)
+
+by_state_year %>%
+  filter(year %% 5 == 0) %>%
+  inner_join(states_map, by = "state") %>%
+  ggplot(aes(long, lat, group = group, fill = n_post_offices)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "blue", high = "red",
+    mid = "pink",
+    midpoint = 2000
+  ) +
+  transition_manual(year) +
+  theme_map() +
+  labs(
+    fill = "Post offices per a million people",
+    title = "{ current_frame }"
+  )
+```
+
+
+```{r}
+post_office_years %>%
+  filter(
+    year == 1900,
+    !state %in% c("HI", "AK")
+  ) %>%
+  ggplot(aes(longitude, latitude)) +
+  borders("state") +
+  geom_point(size = .01, alpha = .25) +
+  theme_map() +
+  coord_map()
+
+post_office_years %>%
+  filter(
+    year %% 20 == 0,
+    !state %in% c("HI", "AK")
+  ) %>%
+  ggplot(aes(longitude, latitude)) +
+  borders("state") +
+  geom_point(size = .01, alpha = .25) +
+  theme_map() +
+  coord_map() +
+  transition_manual(year) +
+  theme_map() +
+  labs(
+    fill = "Post offices per a million people",
+    title = "{ current_frame }"
+  )
+```

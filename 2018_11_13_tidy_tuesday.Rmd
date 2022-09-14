@@ -1,0 +1,30 @@
+---
+title: "Malaria Atlas"
+author: "Lemi Daba"
+date: "7/2/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(malariaAtlas)
+```
+
+```{r}
+
+listData("pr points")
+
+kenya_pr <- tbl_df(getPR("Kenya", species = "BOTH"))
+
+kenya_pr
+
+```
+
+To be continued ... (12:37)
+

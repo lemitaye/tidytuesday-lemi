@@ -1,0 +1,263 @@
+---
+title: "TidyTemplate"
+date: 2021-05-23
+output: html_output
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
+While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(lubridate)
+library(plotly)
+
+theme_set(theme_light())
+```
+
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2021-03-16")
+```
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+tt
+```
+
+
+```{r}
+games <- tt$games %>%
+  mutate(
+    avg_peak_perc = parse_number(avg_peak_perc) / 100,
+    date = paste(year, month, 1) %>% ymd(),
+    month = fct_reorder(month, month(date))
+  ) %>%
+  filter(date > min(date))
+```
+
+
+```{r}
+games %>%
+  count(date) %>%
+  ggplot(aes(date, n)) +
+  geom_col()
+
+summarize_games <- function(tbl) {
+  tbl %>%
+    summarize(
+      median_avg = median(avg),
+      median_peak = median(peak)
+    )
+}
+
+
+games %>%
+  group_by(date) %>%
+  summarize_games() %>%
+  ggplot(aes(date, median_avg)) +
+  geom_line() +
+  expand_limits(y = 0) +
+  labs(
+    x = "Month",
+    y = "Median Popularity of a game on Steam"
+  )
+
+
+games %>%
+  filter(date < "2020-01-01") %>%
+  group_by(month) %>%
+  summarize_games() %>%
+  ggplot(aes(month, median_avg)) +
+  geom_line(group = 1) +
+  expand_limits(y = 0) +
+  labs(
+    x = "Month of year",
+    y = "Median popularity of a game on Steam",
+    title = "Seasonal trend in Steam games",
+    subtitle = "From 2012-2019"
+  )
+
+games %>%
+  group_by(year, month) %>%
+  summarize_games() %>%
+  ggplot(aes(month, median_avg)) +
+  geom_line(aes(color = factor(year), group = year)) +
+  expand_limits(y = 0) +
+  labs(
+    x = "Month of year",
+    y = "Median popularity of a game on Steam",
+    title = "Seasonal trend in Steam games",
+    color = "year"
+  )
+
+games %>%
+  group_by(date) %>%
+  summarize_games() %>%
+  ggplot(aes(date, median_peak)) +
+  geom_line() +
+  expand_limits(y = 0)
+```
+
+
+Distribution of game popularity
+
+```{r}
+games %>%
+  filter(date == max(date)) %>%
+  ggplot(aes(avg)) +
+  geom_histogram() +
+  scale_x_log10(labels = comma, breaks = 10^seq(0, 5)) +
+  labs(x = "Average number of players across Feb 2021")
+
+
+games %>%
+  filter(date == max(date)) %>%
+  ggplot(aes(peak)) +
+  geom_histogram() +
+  scale_x_log10(labels = comma, breaks = 10^seq(0, 5))
+
+
+games %>%
+  filter(date == max(date)) %>%
+  ggplot(aes(avg_peak_perc)) +
+  geom_histogram()
+
+# Let's see what the most popular games are
+games %>%
+  filter(date == max(date)) %>%
+  arrange(desc(avg))
+```
+
+
+
+```{r}
+games %>%
+  filter(avg >= 1000, date == max(date)) %>%
+  arrange(avg_peak_perc) %>%
+  ggplot(aes(avg, 1 / avg_peak_perc, label = gamename)) +
+  geom_point() +
+  geom_text(vjust = 1, hjust = 1, check_overlap = TRUE) +
+  scale_y_log10() +
+  scale_x_log10(labels = comma) +
+  labs(
+    x = "Average number of players in Feb 2021",
+    y = "Ratio of Peak / Average"
+  )
+
+
+g <- games %>%
+  filter(avg >= 1000, date == max(date)) %>%
+  arrange(avg_peak_perc) %>%
+  ggplot(aes(avg, 1 / avg_peak_perc, label = gamename)) +
+  geom_point() +
+  # geom_text(vjust = 1, hjust = 1, check_overlap = TRUE) +
+  scale_y_log10() +
+  scale_x_log10(labels = comma) +
+  labs(
+    x = "Average number of players in Feb 2021",
+    y = "Ratio of Peak / Average"
+  )
+g
+
+ggplotly(g) # From the "plotly" package
+
+# Let's try a different date
+games %>%
+  filter(avg >= 1000, date == "2021-01-01") %>%
+  arrange(avg_peak_perc) %>%
+  ggplot(aes(avg, 1 / avg_peak_perc, label = gamename)) +
+  geom_point() +
+  geom_text(vjust = 1, hjust = 1, check_overlap = TRUE) +
+  scale_y_log10() +
+  scale_x_log10(labels = comma) +
+  labs(
+    x = "Average number of players in Feb 2021",
+    y = "Ratio of Peak / Average"
+  )
+
+# What about from all dates
+games %>%
+  filter(avg >= 1000) %>%
+  arrange(avg_peak_perc) %>%
+  ggplot(aes(avg, 1 / avg_peak_perc, label = gamename)) +
+  geom_point() +
+  geom_text(vjust = 1, hjust = 1, check_overlap = TRUE) +
+  scale_y_log10() +
+  scale_x_log10(labels = comma) +
+  labs(
+    x = "Average number of players in Feb 2021",
+    y = "Ratio of Peak / Average"
+  )
+```
+
+
+
+```{r}
+games %>%
+  filter(fct_lump(gamename, 16, w = avg) != "Other") %>%
+  mutate(gamename = fct_reorder(gamename, -avg)) %>%
+  ggplot(aes(date, avg)) +
+  geom_line() +
+  expand_limits(y = 0) +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~gamename, scales = "free_y") +
+  labs(
+    x = "Month",
+    y = "Average players of this game in this month"
+  )
+```
+
+
+# What became popular during the pandemic specifically?
+
+```{r}
+apr_feb_ratios <- games %>%
+  filter(year == 2020) %>%
+  select(gamename, month, avg, peak) %>%
+  pivot_wider(names_from = month, values_from = c(avg, peak)) %>%
+  select(gamename, contains("January"), contains("April"), contains("February")) %>%
+  mutate(apr_feb_ratio = avg_April / avg_February) %>%
+  filter(avg_January >= 100, avg_February >= 100) %>%
+  arrange(desc(apr_feb_ratio))
+
+games %>%
+  filter(date >= "2018-01-01") %>%
+  inner_join(apr_feb_ratios %>%
+    top_n(12, apr_feb_ratio), by = "gamename") %>%
+  complete(gamename, date, fill = list(avg = 0)) %>%
+  mutate(gamename = as.character(gamename)) %>%
+  mutate(gamename = fct_reorder(gamename, -avg)) %>%
+  ggplot(aes(date, avg)) +
+  geom_line() +
+  expand_limits(y = 0) +
+  geom_vline(xintercept = as.Date("2020-03-01"), color = "red", lty = 2) +
+  scale_y_continuous(labels = comma) +
+  facet_wrap(~gamename, scales = "free_y") +
+  labs(
+    x = "Month",
+    y = "Average players of this game in this month"
+  )
+```

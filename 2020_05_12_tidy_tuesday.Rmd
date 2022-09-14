@@ -1,0 +1,267 @@
+---
+title: "Analyzing volcano eruptions"
+date: 2022-09-07
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(ggthemes)
+library(leaflet)
+library(glue)
+library(DT)
+library(gganimate)
+
+theme_set(theme_light())
+
+```
+
+# Load the weekly Data
+
+Download the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2020-05-12")
+
+```
+
+
+# Readme
+
+```{r Readme, eval = interactive()}
+
+tt
+
+```
+
+
+```{r}
+
+volcano <- tt$volcano %>% 
+  mutate(last_eruption_year = as.numeric(last_eruption_year))
+
+eruptions <- tt$eruptions
+  
+
+```
+
+```{r}
+
+volcano %>% 
+  count(evidence_category, sort = T)
+
+volcano %>% 
+  mutate(years_ago = 2020 - last_eruption_year) %>% 
+  ggplot(aes(years_ago + 1, fill = evidence_category)) +
+  geom_histogram() +
+  scale_x_log10()
+
+volcano %>% 
+  filter(evidence_category == "Eruption Observed") %>% 
+  arrange(last_eruption_year) %>% 
+  select(last_eruption_year, volcano_name, country)
+
+volcano %>% 
+  filter(str_detect(volcano_name, "Vesuvius"))
+
+volcano %>% 
+  count(primary_volcano_type, sort = T)
+
+```
+
+
+```{r}
+
+eruptions %>% 
+  mutate(years_ago = 2020 - start_year) %>% 
+  ggplot(aes(years_ago + 1, fill = eruption_category)) +
+  geom_histogram() +
+  scale_x_log10()
+
+```
+
+```{r}
+
+volcano %>% 
+  mutate(
+    primary_volcano_type = str_remove(primary_volcano_type, "\\(.*\\)"),
+    primary_volcano_type = fct_lump(primary_volcano_type, 6)
+    ) %>% 
+  ggplot(aes(longitude, latitude)) +
+  geom_point(aes(color = primary_volcano_type), size = .7) +
+  borders() +
+  # coord_map() +
+  theme_map() +
+  labs(title = "Volcanos of the world",
+       color = "Type")
+
+
+```
+
+An interactive map:
+```{r}
+
+template <- "<p>{ volcano_name }</p><p>{ primary_volcano_type }</p>"
+
+volcano_html <- volcano %>% 
+  mutate(html = glue(template))
+
+volcano %>% 
+  mutate(transformed_pop = log2(volcano$population_within_5_km + 1),
+         pop_color = colorNumeric(c("blue", "red"), domain = transformed_pop)(transformed_pop)) %>% 
+  gather(key, value, 
+         volcano_name, primary_volcano_type, 
+         last_eruption_year, country, 
+         tectonic_settings, major_rock_1,
+         population_within_5_km) %>% 
+  mutate(key = str_replace_all(key, "_", " ") %>% str_to_title(),
+         key = paste0("<b>", key, "</b>")) %>% 
+  replace_na(list(value = "Unknown")) %>% 
+  nest(data = c(key, value)) %>% 
+  mutate(html = map(data, 
+                    knitr::kable, 
+                    format = "html", 
+                    escape = FALSE,
+                    col.names = c(" ", " "))) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addCircleMarkers(
+    lat = ~latitude, 
+    lng = ~longitude, 
+    color = ~pop_color,
+    popup = ~html,
+    radius = 1
+    ) %>% 
+  addMeasure()
+
+
+volcano %>% 
+  ggplot(aes(population_within_5_km)) +
+  geom_histogram() +
+  scale_x_log10()
+
+```
+
+```{r}
+
+eruptions %>% 
+  ggplot(aes(2020 - start_year)) +
+  geom_histogram() +
+  scale_x_log10()
+
+eruptions %>% 
+  filter(start_year >= 1900,
+         eruption_category != "Discredited Eruption") %>% 
+  count(eruption_category, sort = T)
+  ggplot(aes(2020 - start_year)) +
+  geom_histogram() +
+  scale_x_log10()
+
+```
+
+
+```{r}
+
+eruptions %>% 
+  filter(start_year >= 1900,
+         eruption_category != "Discredited Eruption") %>% 
+  mutate(volume = .0001 * 10 ^ vei) %>% 
+  ggplot(aes(longitude, latitude)) +
+  geom_point(aes(size = volume, color = volume)) +
+  borders() +
+  scale_size_continuous(range(1, 6)) +
+  scale_color_gradient2(low = "blue", high = "red",
+                        midpoint = log10(.01),
+                        trans = "log10",
+                        guide = "none") +
+  theme_map() +
+  labs(title = "Eruptions since 1900", size = "Km^3")  
+
+
+# an animated graph
+animated_graph <- eruptions %>% 
+  filter(start_year >= 1900,
+         eruption_category != "Discredited Eruption") %>% 
+  mutate(volume = .0001 * 10 ^ vei) %>% 
+  ggplot(aes(longitude, latitude)) +
+  geom_point(aes(size = volume, color = volume)) +
+  borders() +
+  scale_size_continuous(range(1, 6)) +
+  scale_color_gradient2(low = "blue", high = "red",
+                        midpoint = log10(.01),
+                        trans = "log10",
+                        guide = "none") +
+  theme_map() +
+  transition_time(start_year) +
+  theme(legend.position = "none") +
+  labs(title = "Eruptions: Year { round(frame_time) }")  
+
+animate(animated_graph, 50, fps = 5)
+
+# anim_save("eruptions.gif") # if you want to save your animation as a gif
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
