@@ -1,0 +1,296 @@
+---
+title: "TidyTemplate"
+date: 2022-09-21
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(lubridate)
+library(ggthemes)
+library(gganimate)
+library(tidytext)
+library(widyr)
+library(tidygraph)
+library(ggraph)
+library(tidymodels)
+
+theme_set(theme_light())
+
+```
+
+# Load the weekly Data
+
+Download the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2022-09-13")
+
+tt
+
+```
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+bigfoot <- tt$bigfoot %>% 
+  mutate(
+    season = na_if(season, "Unknown"),
+    title = str_remove(title, "Report \\d+\\: "),
+    year = year(date),
+    season = fct_relevel(season, c("Spring", "Summer", "Fall", "Winter"))
+    )
+
+```
+
+
+```{r}
+
+bigfoot %>% 
+  count(season, sort = TRUE)
+
+bigfoot %>% 
+  count(classification)
+
+bigfoot %>% 
+  filter(year >= 1950) %>% 
+  ggplot(aes(year, fill = classification)) +
+  geom_bar()
+
+```
+
+
+```{r}
+
+bigfoot %>% 
+  count(state, sort = TRUE)
+
+bigfoot_filtered <- bigfoot %>% 
+  filter(state != "Alaska") %>% 
+  filter(longitude > -130, year >= 1950) 
+
+bigfoot_filtered %>% 
+  ggplot(aes(longitude, latitude)) +
+  borders("state") +
+  geom_point(size = .5) +
+  theme_map() +
+  coord_map() +
+  labs(title = "Bigfoot sightings")
+
+bigfoot_filtered %>% 
+  filter(classification != "Class C") %>% 
+  ggplot(aes(longitude, latitude, color = classification)) +
+  borders("state") +
+  geom_point(size = .5) +
+  theme_map() +
+  coord_map() +
+  transition_manual(year, cumulative = TRUE) +
+  labs(title = "Bigfoot sightings: { current_frame }")
+
+```
+
+
+```{r}
+
+bigfoot_filtered %>% 
+  mutate(state = fct_lump(state, 8),
+         state = fct_infreq(state)) %>% 
+  ggplot(aes(5 * year %/% 5)) +
+  geom_bar() +
+  facet_wrap(~ state, scales = "free") +
+  labs(x = "Year", y = "# of Sightings (in 5-year period)")
+
+```
+
+```{r}
+
+bigfoot %>% 
+  filter(!is.na(season)) %>% 
+  count(season)
+
+bigfoot %>% 
+  filter(!is.na(season)) %>% 
+  ggplot(aes(year, fill = season)) +
+  geom_bar() +
+  facet_wrap(~ season)
+
+bigfoot %>% 
+  filter(!is.na(season)) %>% 
+  count(season, state = fct_lump(state, 8)) %>% 
+  mutate(state = fct_reorder(state, n, sum)) %>% 
+  ggplot(aes(n, season)) +
+  geom_col() +
+  facet_wrap(~ state, scales = "free_x")
+
+```
+
+```{r}
+
+bigfoot %>% 
+  filter(!is.na(date)) %>% 
+  count(month = month(date, label = TRUE)) %>% 
+  # mutate(month = fct_reorder(month, n)) %>% 
+  ggplot(aes(month, n)) +
+  geom_col(fill = "darkgreen") 
+
+```
+
+
+Text Analysis:
+
+```{r}
+
+bigfoot_title_words <- bigfoot %>% 
+  select(id = number, year, season, classification, state, 
+         title, observed, location_details) %>% 
+  unnest_tokens(word, title) %>% 
+  filter(!is.na(word)) %>% 
+  anti_join(stop_words, by = "word")
+
+bigfoot_title_words %>% 
+  count(year, word = fct_lump(word, 16)) %>% 
+  filter(word != "Other") %>% 
+  ggplot(aes(year, n)) +
+  geom_col() +
+  facet_wrap(~ word, scales = "free_y")
+
+bigfoot_title_words %>% 
+  filter(year >= 1950) %>% 
+  group_by(decade = 10 * year %/% 10) %>% 
+  mutate(decade_total = n_distinct(word)) %>% 
+  count(decade, decade_total, word = fct_lump(word, 16)) %>% 
+  filter(word != "Other") %>% 
+  ggplot(aes(decade, n / decade_total)) +
+  geom_line() +
+  expand_limits(y = 0) +
+  facet_wrap(~ word, scales = "free_y") +
+  scale_y_continuous(labels = percent_format()) +
+  labs(x = "Decade", y = "% of titles containing this word")
+
+bigfoot_title_words %>% 
+  filter(year >= 1950) %>% 
+  group_by(word) %>% 
+  summarize(n = n(), 
+            avg_year = mean(year)) %>% 
+  filter(n >= 200) %>% 
+  arrange(desc(avg_year))
+
+```
+
+
+```{r}
+
+bigfoot_title_words %>% 
+  filter(fct_lump(word, 20) != "Other") %>% 
+  pairwise_cor(word, id, sort = TRUE)
+
+bigfoot %>% 
+  filter(str_detect(title, "memory")) %>% 
+  pull(title)
+
+```
+
+
+```{r}
+
+bigfoot_observed_words <- bigfoot %>% 
+  select(id = number, year, season, classification, state, 
+         title, observed, location_details) %>% 
+  unnest_tokens(word, observed) %>% 
+  filter(!is.na(word)) %>% 
+  anti_join(stop_words, by = "word")
+
+word_counts <- bigfoot_observed_words %>% 
+  count(word, sort=  TRUE)
+
+bigfoot_observed_words %>% 
+  filter(fct_lump(word, 30) != "Other") %>% 
+  pairwise_cor(word, id, sort = TRUE) %>% 
+  head(50) %>% 
+  tidygraph::tbl_graph(nodes = word_counts, edges = .) %>% 
+  ggraph() +
+  geom_edge_link() +
+  geom_node_point()
+
+```
+
+### Machine Learning
+
+Can I predict the Class (A vs. B) based on features of the data like time, weather, and text?
+
+```{r}
+
+set.seed(2022)
+bigfoot_spl <- bigfoot %>% 
+  filter(classification != "Class C") %>% 
+  initial_split()
+
+bigfoot_train <- training(bigfoot_spl)
+bigfoot_test <- testing(bigfoot_spl)
+
+bigfoot_train_fold5 <- bigfoot_train %>% 
+  vfold_cv(5)
+
+tune <- recipe(classification ~ season + year + state, 
+       bigfoot_train) %>% 
+  step_impute_mean(all_numeric_predictors()) %>% 
+  step_ns(year, deg_free = tune()) %>% 
+  step_other(all_nominal_predictors(), threshold = tune()) %>%
+  workflow(logistic_reg()) %>% 
+  tune_grid(bigfoot_train_fold5, 
+            metrics = metric_set(roc_auc),
+            grid = crossing(deg_free = seq(1, 7, 2),
+                            threshold = c(.01, .1))) 
+
+autoplot(tune)
+
+# Linear model
+lin_wf <- recipe(classification ~ season + year + state + temperature_mid + humidity + latitude + longitude, 
+       bigfoot_train) %>% 
+  step_impute_mean(all_numeric_predictors()) %>% 
+  step_ns(year, deg_free = 6) %>% 
+  step_other(all_nominal_predictors(), threshold = .01) %>%
+  workflow(logistic_reg()) 
+
+lin_wf %>% 
+  fit_resamples(bigfoot_train_fold5, 
+            metrics = metric_set(roc_auc)) %>% 
+  collect_metrics()
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
