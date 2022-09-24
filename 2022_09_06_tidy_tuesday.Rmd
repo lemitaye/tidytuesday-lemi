@@ -262,5 +262,4 @@ set_parts %>%
   ) +
   theme_minimal() +
   theme(panel.grid = element_blank())
-
 ```
