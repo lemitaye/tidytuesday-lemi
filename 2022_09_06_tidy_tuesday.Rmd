@@ -1,0 +1,265 @@
+---
+title: "Analyzing LEGOs in R"
+date: 2022-09-24
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(tidytext)
+library(widyr)
+
+theme_set(theme_light())
+```
+
+# Load the weekly Data
+
+Download the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+# data downloaded from: https://rebrickable.com/downloads/
+
+lego_datasets <- tibble(file = dir("data/LEGOs/", full.names = TRUE)) %>%
+  mutate(data = map(file, read_csv)) %>%
+  extract(file, "name", "LEGOs/(.*).csv.gz") %>%
+  deframe()
+
+lego_datasets$minifigs
+```
+
+
+```{r}
+
+lego_datasets$sets %>%
+  ggplot(aes(year)) +
+  geom_histogram()
+
+lego_datasets$sets %>%
+  count(year) %>%
+  ggplot(aes(year, n)) +
+  geom_col() +
+  labs(x = "Year", y = "# of LEGO sets")
+
+lego_datasets$sets %>%
+  group_by(name) %>%
+  summarize(
+    n_sets = n(),
+    year_first = min(year),
+    year_last = max(year)
+  ) %>%
+  arrange(desc(n_sets)) %>%
+  View()
+```
+
+
+```{r}
+
+sets_with_themes <- lego_datasets$sets %>%
+  left_join(lego_datasets$themes %>%
+    select(id, theme_name = name),
+  by = c(theme_id = "id")
+  ) %>%
+  mutate(num_parts = na_if(num_parts, 0))
+
+sets_with_themes %>%
+  count(theme_name, sort = TRUE) %>%
+  head(25) %>%
+  mutate(theme_name = fct_reorder(theme_name, n)) %>%
+  ggplot(aes(n, theme_name)) +
+  geom_col() +
+  labs(
+    x = "# of sets", y = "",
+    title = "Most common LEGO themes"
+  )
+
+by_theme <- sets_with_themes %>%
+  group_by(theme_name) %>%
+  summarize(
+    n_sets = n(),
+    median_parts = median(num_parts, na.rm = TRUE)
+  ) %>%
+  arrange(desc(n_sets))
+
+by_theme %>%
+  filter(n_sets >= 75) %>%
+  ggplot(aes(n_sets, median_parts)) +
+  geom_point() +
+  geom_text(aes(label = theme_name),
+    hjust = 1, vjust = 1,
+    check_overlap = TRUE
+  ) +
+  scale_x_log10() +
+  scale_y_log10() +
+  expand_limits(x = 30)
+
+by_theme %>%
+  filter(!is.na(median_parts)) %>%
+  head(20) %>%
+  mutate(theme_name = fct_reorder(theme_name, median_parts)) %>%
+  ggplot(aes(median_parts, theme_name)) +
+  geom_col() +
+  labs(
+    title = "What are the most/least complex themes?",
+    subtitle = "Among the 20 themes with the most sets",
+    x = "Median # of parts in a set",
+    y = ""
+  )
+```
+
+
+```{r}
+
+sets_with_themes %>%
+  filter(!str_detect(theme_name, "Role Play")) %>%
+  filter(fct_lump(theme_name, 25) != "Other") %>%
+  mutate(theme_name = fct_reorder(theme_name, num_parts, na.rm = TRUE)) %>%
+  ggplot(aes(num_parts, theme_name)) +
+  geom_boxplot() +
+  scale_x_log10() +
+  labs(
+    x = "# of parts", y = "",
+    title = "What are the most/least complex themes?",
+    subtitle = "Among the 20 themes with the most sets"
+  )
+```
+
+Have sets been getting more complicated over time?
+
+```{r}
+
+sets_with_themes %>%
+  group_by(decade = (year %/% 10) * 10) %>%
+  summarize(
+    n_sets = n(),
+    median_num_parts = median(num_parts, na.rm = TRUE)
+  )
+
+sets_with_themes %>%
+  mutate(decade = (year %/% 10) * 10) %>%
+  ggplot(aes(decade, num_parts, group = decade)) +
+  geom_boxplot() +
+  geom_jitter(height = 0, width = 3, alpha = .05) +
+  scale_y_log10()
+
+# only for Star Wars:
+sets_with_themes %>%
+  filter(theme_name == "Star Wars") %>%
+  mutate(decade = (year %/% 10) * 10) %>%
+  ggplot(aes(decade, num_parts, group = decade)) +
+  geom_boxplot() +
+  geom_jitter(height = 0, width = 3, alpha = .05) +
+  scale_y_log10()
+```
+
+
+```{r}
+
+inventories_current <- lego_datasets$inventories %>%
+  arrange(desc(version)) %>%
+  distinct(set_num, .keep_all = TRUE) %>%
+  rename(inventory_id = id) %>%
+  select(inventory_id, set_num)
+
+set_parts <- sets_with_themes %>%
+  left_join(inventories_current, by = "set_num") %>%
+  left_join(lego_datasets$inventory_parts,
+    by = "inventory_id",
+    suffix = c("", "_inventory")
+  ) %>%
+  left_join(lego_datasets$colors %>%
+    rename(color = name),
+  by = c(color_id = "id")
+  ) %>%
+  mutate(rgb = paste0("#", rgb))
+
+set_parts %>%
+  filter(!is.na(color)) %>%
+  count(
+    color = fct_lump(color, 16),
+    rgb = fct_lump(rgb, 16), sort = TRUE
+  ) %>%
+  filter(color != "Other") %>%
+  mutate(color = fct_reorder(color, n)) %>%
+  ggplot(aes(n, color, fill = I(rgb))) +
+  geom_col() +
+  labs(x = "# of parts with this color", y = "") +
+  theme_dark()
+```
+
+
+```{r}
+
+by_theme_color <- set_parts %>%
+  filter(!is.na(color)) %>%
+  count(theme_name,
+    color = fct_lump(color, 20),
+    rgb = fct_lump(rgb, 20),
+    sort = TRUE
+  ) %>%
+  filter(color != "Other")
+
+by_theme_color %>%
+  filter(theme_name %in% c("Star Wars", "Batman", "Harry Potter", "Christmas")) %>%
+  # mutate(color = fct_reorder(color, n)) %>%
+  # reorder within theme (uses package `tidytext`):
+  mutate(color = reorder_within(color, n, theme_name)) %>%
+  ggplot(aes(n, color, fill = I(rgb))) +
+  geom_col() +
+  facet_wrap(~theme_name, scales = "free") +
+  scale_y_reordered() +
+  labs(x = "# of parts with this color", y = "") +
+  # theme_dark() +
+  theme(axis.text.y = element_blank())
+
+by_theme_color %>%
+  filter(fct_lump(theme_name, 16) != "Other") %>%
+  ggplot(aes(n, theme_name, fill = I(rgb))) +
+  geom_col(position = "fill") +
+  scale_x_continuous(labels = percent) +
+  labs(x = "% of parts in this theme", y = "")
+
+by_theme_color %>%
+  filter(fct_lump(theme_name, 50) != "Other") %>%
+  mutate(color = as.character(color), n = log2(n)) %>%
+  pairwise_cor(theme_name, color, n, sort = TRUE) %>%
+  filter(item1 == "Batman")
+``` 
+
+
+```{r}
+
+set_parts %>%
+  filter(!is.na(color)) %>%
+  count(
+    decade = 10 * (year %/% 10), rgb,
+    sort = TRUE
+  ) %>%
+  ggplot(aes(decade, n, fill = I(rgb))) +
+  geom_col(position = position_fill(reverse = TRUE))
+
+set_parts %>%
+  filter(!is.na(color)) %>%
+  count(year, rgb,
+    sort = TRUE
+  ) %>%
+  complete(year, rgb, fill = list(n = 0)) %>%
+  ggplot(aes(year, n, fill = I(rgb))) +
+  geom_area(position = position_fill(reverse = TRUE)) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(
+    x = "Year",
+    y = "% of parts with this color"
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+```
