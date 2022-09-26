@@ -1,5 +1,5 @@
 ---
-title: "TidyTemplate"
+title: "Analyzing Bigfoot in R"
 date: 2022-09-21
 output: html_document
 editor_options: 
