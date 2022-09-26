@@ -1,0 +1,196 @@
+---
+title: "Analyzing computer chips in R"
+date: 2022-09-26
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(lubridate)
+
+theme_set(theme_light())
+
+```
+
+# Load the weekly Data
+
+Download the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2022-08-23")
+
+```
+
+Downloaded from: https://chip-dataset.vercel.app/
+```{r}
+# read-in the downloaded full dataset:
+
+raw_chips <- read_csv("data/chip_dataset.csv") 
+
+chips <- raw_chips %>% 
+  select(-1) %>% 
+  janitor::clean_names() %>% 
+  mutate(release_date = as.Date(release_date),
+         transistors = transistors_million * 1e6,
+         year = year(release_date))
+
+chips %>% 
+  View()
+
+
+```
+
+```{r}
+
+chips %>% 
+  count(year = year(release_date), type) %>% 
+  ggplot(aes(year, n, fill = type)) +
+  geom_col() +
+  labs(x = "Year", y = "# of chips")
+
+chips %>% 
+  group_by(year = year(release_date)) %>% 
+  summarize(pct_gpu = mean(type == "GPU")) %>% 
+  ggplot(aes(year, pct_gpu)) +
+  geom_line() +
+  expand_limits(y = 0)
+
+chips %>% 
+  ggplot(aes(transistors_million)) +
+  geom_histogram() +
+  scale_x_log10(labels = label_number(suffix = "M", big.mark = ","))
+
+summarize_chips <- function(tbl) {
+  tbl %>% 
+    summarize(
+      pct_gpu = mean(type == "GPU"),
+      median_transistors = median(transistors, na.rm = TRUE),
+      geom_mean_transistors = exp(mean(log(transistors), na.rm = TRUE)),
+      n = n(),
+      .groups = "drop"
+      ) %>% 
+    arrange(desc(n))
+}
+
+chips %>% 
+  group_by(year = year(release_date)) %>% 
+  summarize_chips() %>% 
+  ggplot(aes(year, median_transistors / 1e6)) +
+  geom_line() +
+  scale_y_log10()
+
+chips %>% 
+  ggplot(aes(release_date, transistors_million)) +
+  geom_point() +
+  geom_smooth(method = "loess") +
+  scale_y_log10()
+
+```
+
+
+```{r}
+
+chips %>% 
+  mutate( year_since_2000 = as.integer(release_date - as.Date("2000-01-01")) / 365) %>% 
+  mutate(moores_law = 30 * 2 ^ (.5 * year_since_2000)) %>% 
+  ggplot(aes(release_date, transistors_million)) +
+  geom_point() +
+  geom_line(aes(y = moores_law), color = "red") +
+  geom_smooth(method = "loess") +
+  scale_y_log10() +
+  labs(x = "Chip relaase date",
+       y = "# of transistors (millions)",
+       title = "We are a bit below Moore's law")
+
+chips %>% 
+  group_by(foundry = fct_lump(foundry, 6), type) %>% 
+  summarize_chips() %>% 
+  mutate(foundry = fct_reorder(foundry, n, sum)) %>% 
+  ggplot(aes(n, foundry, fill = type)) +
+  geom_col() +
+  labs(y = "Chip creator")
+
+chips %>% 
+  group_by(foundry = fct_lump(foundry, 2), year) %>% 
+  summarize_chips() %>% 
+  ggplot(aes(year, median_transistors, color = foundry)) +
+  geom_line() +
+  scale_y_log10()
+
+chips %>% 
+  mutate(foundry = fct_lump(foundry, 2)) %>% 
+  ggplot(aes(release_date, transistors_million, color = foundry)) +
+  geom_point(alpha = .1) +
+  geom_smooth(method = "lm") +
+  scale_y_log10() +
+  labs(x = "Chip relaase date",
+       y = "# of transistors (millions)")
+
+```
+
+
+```{r}
+
+chips %>% 
+  ggplot(aes(fp64_gflops)) +
+  geom_histogram() +
+  scale_x_log10()
+
+chips %>% 
+  filter(!is.na(fp32_gflops)) %>% 
+  ggplot(aes(release_date, fp32_gflops)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  scale_y_log10() +
+  labs(x = "Chip relaase date",
+       y = "Gigaflops (fp32)")
+
+chips %>% 
+  filter(!is.na(fp32_gflops)) %>% 
+  group_by(year) %>% 
+  filter(n() >= 50) %>% 
+  ggplot(aes(transistors_million, fp32_gflops)) +
+  geom_point() +
+  facet_wrap(~ year, scales = "free") +
+  scale_x_log10() +
+  scale_y_log10()
+
+```
+
+
+```{r}
+
+chips %>% 
+  ggplot(aes(release_date, process_size_nm)) +
+  geom_point(alpha = .2) +
+  scale_y_log10()
+
+lm(log(fp64_gflops) ~ log(transistors) + log(process_size_nm) +  year, 
+   data = chips) %>% 
+  summary()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
