@@ -122,7 +122,24 @@ nurses %>%
 ```
 
 
-To be continued... (19:31)
+```{r}
+
+map_data("state") %>% 
+  as_tibble()
+
+nurses %>% 
+  filter(year == 2020) %>% 
+  mutate(state = str_to_lower(state)) %>% 
+  inner_join(map_data("state"), by = c(state = "region")) %>% 
+  ggplot(aes(long, lat, group = group, fill = hourly_wage_median)) +
+  geom_polygon() +
+  coord_map() +
+  scale_fill_viridis_c(labels = dollar_format()) +
+  ggthemes::theme_map() +
+  labs(title = "Hourly wage of registered nurses by state, 2020",
+       fill = "Median wage")
+
+```
 
 
 
