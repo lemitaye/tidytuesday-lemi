@@ -8,11 +8,6 @@ editor_options:
 
 # TidyTuesday
 
-Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
-Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
-While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
-The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
-As such we encourage everyone of all skills to participate!
 
 ```{r setup, include=FALSE}
 
@@ -21,7 +16,9 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(tidytuesdayR)
 library(scales)
+library(broom)
 library(lubridate)
+
 theme_set(theme_light())
 
 ```
@@ -39,146 +36,162 @@ tt <- tt_load("2021-05-18")
 
 # Readme
 
-Take a look at the readme for the weekly data to get insight on the dataset.
-This includes a data dictionary, source, and a link to an article on the data.
-
 ```{r Readme, eval = interactive()}
 
 tt
 
 ```
 
-
-# Glimpse Data
-
-Take an initial look at the format of the data available.
-
-```{r Glimpse}
-
-tt %>% 
-  map(glimpse)
-
-```
-
-# Wrangle
-
-Explore the data and process it into a nice format for plotting! Access each dataset by name by using a dollarsign after the `tt` object and then the name of the data set.
-
-```{r Wrangle}
+```{r Load}
 
 survey <- tt$survey %>%
-  mutate(
-    timestamp = mdy_hms(timestamp),
-    age_category = fct_relevel(
-      fct_reorder(how_old_are_you, parse_number(how_old_are_you)), "under 18"
-    )
-  )
+  mutate(timestamp = mdy_hms(timestamp),
+         age_category = fct_relevel(fct_reorder(how_old_are_you, parse_number(how_old_are_you)), "under 18"),
+         experience_overall = str_replace(overall_years_of_professional_experience, " - ", "-"),
+         experience_overall = fct_reorder(experience_overall, parse_number(experience_overall)),
+         experience_in_field = str_replace(years_of_experience_in_field, " - ", "-"),
+         experience_in_field = fct_reorder(experience_in_field, parse_number(experience_in_field))) %>%
+  mutate(gender = fct_collapse(coalesce(gender, "Other or prefer not to answer"), "Other or prefer not to answer" = c("Other or prefer not to answer", "Prefer not to answer")),
+         race = fct_lump(coalesce(race, "Other"), 4))
 
-survey %>% 
- count(age_category)
+survey %>%
+  count(years_of_experience_in_field)
+
+survey %>%
+  count(industry, sort = TRUE)
+
+survey %>%
+  count(job_title, sort = TRUE)
+
+survey %>%
+  count(currency, sort = TRUE)
 ```
-
-
 
 ```{r}
 
-survey %>% 
- count(currency, sort = TRUE)
+survey_usd <- survey %>%
+  filter(currency == "USD") %>%
+  filter(annual_salary >= 5000,
+         annual_salary <= 2e6) %>%
+  mutate(state = str_remove(state, ", .*"))
 
-
-survey_usd <- survey %>% 
- filter(currency == "USD", between(annual_salary, 5000, 2e6) ) %>% 
- mutate(state = str_remove(state, ", .*"))
-
-survey_usd %>% 
- ggplot(aes(annual_salary)) +
- geom_histogram() + 
- scale_x_log10( labels = dollar_format() ) + 
- labs(x = "Annual Salary")
-# We have a log normal distrubtion
 ```
 
-
-
 ```{r}
-survey_usd %>% 
- count(state, sort = TRUE)
 
 survey_usd %>%
-  filter(!is.na(state)) %>%
-  mutate(
-    state = fct_lump(state, 6),
-    state = fct_reorder(state, annual_salary)
-  ) %>%
-  ggplot(aes(annual_salary, state)) +
-  geom_boxplot() +
-  scale_x_log10(label = dollar_format())
-
+  ggplot(aes(annual_salary)) +
+  geom_histogram() +
+  scale_x_log10(labels = dollar_format()) +
+  labs(x = "Annual")
 
 summarize_salary <- function(tbl) {
   tbl %>%
-    summarize(
-      n = n(),
-      median_salary = median(annual_salary)
-    ) %>%
+    summarize(n = n(),
+              median_salary = median(annual_salary)) %>%
     arrange(desc(n))
 }
 
-
-survey_usd %>%
-  filter(!is.na(state)) %>%
-  mutate(
-    state = fct_lump(state, 9),
-    state = fct_reorder(state, annual_salary)
-  ) %>%
-  group_by(state) %>% 
-  summarize_salary() %>% 
-  ggplot(aes(median_salary, state)) +
-  geom_col() +
-  scale_x_continuous(label = dollar_format())
-
-survey_usd %>%
-  filter(!is.na(industry)) %>%
-  mutate(
-    industry = fct_lump(industry, 9),
-    industry = fct_reorder(industry, annual_salary)
-  ) %>%
-  group_by(industry) %>% 
-  summarize_salary() %>% 
-  ggplot(aes(median_salary, industry)) +
-  geom_col() +
-  scale_x_continuous(label = dollar_format())
-
-# Let's use a function
-
-plot_categorical <- function(tbl, column, n_levels = 9) {
-  tbl %>%
+plot_categorical <- function(tbl, column, n_levels = 9, reorder = TRUE) {
+  
+  lumped_tbl <- tbl %>%
     filter(!is.na({{ column }})) %>%
-    mutate(
-      {{ column }} := fct_lump({{ column }}, n_levels),
-      {{ column }} := fct_reorder({{ column }}, annual_salary)
-    ) %>%
+    mutate({{ column }} := fct_lump({{ column }}, n_levels))
+  
+  if (reorder) {
+    lumped_tbl <- lumped_tbl %>%
+      mutate({{ column }} := fct_reorder({{ column }}, annual_salary))
+  }
+  
+  lumped_tbl %>%
     group_by({{ column }}) %>%
     summarize_salary() %>%
     ggplot(aes(median_salary, {{ column }})) +
     geom_col() +
-    scale_x_continuous(label = dollar_format()) + 
-    labs(x = "Median Salary")
+    scale_x_continuous(labels = dollar_format()) +
+    labs(x = "Median salary")
 }
 
-survey_usd %>% 
- plot_categorical(state)
+survey_usd %>%
+  plot_categorical(state)
 
-survey_usd %>% 
- plot_categorical(industry)
+survey_usd %>%
+  plot_categorical(industry)
 
-survey_usd %>% 
- plot_categorical(job_title, n_levels = 15)
+survey_usd %>%
+  plot_categorical(job_title, n_levels = 10)
+
+survey_usd %>%
+  plot_categorical(experience_overall, reorder = FALSE)
+
+survey_usd %>%
+  plot_categorical(experience_in_field, reorder = FALSE)
+
+survey_usd %>%
+  plot_categorical(age_category, reorder = FALSE)
+
+survey_usd %>%
+  plot_categorical(gender)
+
+survey_usd %>%
+  plot_categorical(race, n_levels = 4)
+```
+
+
+
+### ANOVA
+
+```{r}
+survey_usd %>%
+  filter(!is.na(experience_overall)) %>%
+  ggplot(aes(annual_salary, experience_overall)) +
+  geom_boxplot() +
+  scale_x_log10()
+
+library(broom)
+
+lm(log2(annual_salary) ~ experience_overall, data = survey_usd)
+
+lm(log2(annual_salary) ~ experience_in_field, data = survey_usd) %>%
+  summary()
+
+survey_usd %>%
+  mutate(job_title = fct_lump(job_title, 20)) %>%
+  lm(log2(annual_salary) ~ job_title, data = .) %>%
+  summary()
+
+survey_usd %>%
+  mutate(job_title = fct_lump(job_title, 10),
+         state = fct_lump(state, 10),
+         industry = fct_lump(industry, 10)) %>%
+  lm(log2(annual_salary) ~ job_title + state + city + experience_in_field + gender + race + industry, data = .) %>%
+  anova() %>%
+  tidy() %>%
+  mutate(pct_variation = sumsq / sum(sumsq)) %>%
+  arrange(desc(pct_variation))
 
 ```
 
 
-To be continued ...
+```{r}
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
