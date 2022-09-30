@@ -148,8 +148,6 @@ survey_usd %>%
   geom_boxplot() +
   scale_x_log10()
 
-library(broom)
-
 lm(log2(annual_salary) ~ experience_overall, data = survey_usd)
 
 lm(log2(annual_salary) ~ experience_in_field, data = survey_usd) %>%
@@ -164,7 +162,7 @@ survey_usd %>%
   mutate(job_title = fct_lump(job_title, 10),
          state = fct_lump(state, 10),
          industry = fct_lump(industry, 10)) %>%
-  lm(log2(annual_salary) ~ job_title + state + city + experience_in_field + gender + race + industry, data = .) %>%
+  lm(log2(annual_salary) ~ job_title + state + experience_in_field + gender + race + industry, data = .) %>%
   anova() %>%
   tidy() %>%
   mutate(pct_variation = sumsq / sum(sumsq)) %>%
@@ -173,11 +171,8 @@ survey_usd %>%
 ```
 
 
-```{r}
+## Machine Learning
 
-
-
-```
 
 
 
