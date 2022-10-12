@@ -1,0 +1,298 @@
+---
+title: "Analyzing Art Collections"
+date: 2022-10-04
+output: html_document
+---
+
+# TidyTuesday
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(janitor)
+library(glue)
+library(ggridges)
+
+theme_set(theme_light())
+
+```
+
+# Load the weekly Data
+
+Download the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2021-01-12")
+
+```
+
+
+```{r Readme, eval = interactive()}
+
+artwork <- tt$artwork %>% 
+  filter(artist != "Turner, Joseph Mallord William") %>%
+  clean_names() 
+
+artists <- tt$artists %>% 
+  clean_names()
+
+```
+
+
+```{r}
+
+artwork %>% 
+  separate(medium, c("medium", "surface"), sep = " on ",
+           fill = "right", extra = "merge") %>% 
+  count(medium, sort = TRUE) %>% 
+  head(20) %>% 
+  replace_na(list(medium = "Missing")) %>% 
+  mutate(medium = fct_reorder(medium, n)) %>% 
+  ggplot(aes(n, medium)) +
+  geom_col() +
+  labs(x = "# of pieces in Tate Modern",
+           y = 'Medium (ignoring "on ...")')
+  
+
+artwork %>% 
+  filter(fct_lump(artist, 16) != "Other") %>% 
+  mutate(medium = fct_lump(medium, 8)) %>% 
+  count(artist, medium, sort = TRUE) %>% 
+  mutate(artist = fct_reorder(artist, n, sum)) %>% 
+  ggplot(aes(n, artist, fill = medium)) +
+  geom_col()
+
+```
+
+```{r}
+
+by_decade_medium <- artwork %>% 
+  # separate(medium, c("medium", "surface"), sep = " on ",
+           # fill = "right", extra = "merge") %>% 
+  filter(year >= 1750) %>% 
+  group_by(decade = 10 * (year %/% 10)) %>% 
+  mutate(n_artists_decade = n_distinct(artist)) %>% 
+  ungroup() %>% 
+  group_by(decade, 
+           medium = fct_lump(medium, 11),
+           n_artists_decade) %>% 
+  summarize(n = n(),
+            n_artists = n_distinct(artist), .groups = "drop") %>% 
+  complete(decade, medium, 
+           fill = list(n = 0, n_artists = 0)) %>% 
+  group_by(decade) %>% 
+  mutate(pct = n / sum(n),
+         pct_artists = n_artists / n_artists_decade ) %>% 
+  ungroup()
+
+by_decade_medium %>% 
+  ggplot(aes(decade, n, fill = medium)) +
+  geom_area()
+
+by_decade_medium %>% 
+  filter(!is.na(medium)) %>% 
+  mutate(medium = fct_reorder(medium, n, sum)) %>% 
+  ggplot(aes(decade, pct, fill = medium)) +
+  geom_area() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(x = "Decade",
+       y = "% of Tate Modern pieces",
+       fill = "Medium (without \"on ... \")")
+
+by_decade_medium %>% 
+  filter(!is.na(medium)) %>% 
+  mutate(medium = fct_reorder(medium, pct_artists, sum, 
+                              .desc = TRUE)) %>% 
+  ggplot(aes(decade, pct_artists, fill = medium)) +
+  geom_col() +
+  facet_wrap(~ medium, scale = "free_y") +
+  scale_y_continuous(labels = percent_format()) +
+  theme(legend.position = "none") +
+  labs(x = "Decade",
+       y = "% of artists in this decade using this medium")
+
+```
+
+```{r}
+
+artwork_size <- artwork %>% 
+  filter(units == "mm",
+         !is.na(height),
+         !is.na(width)) %>% 
+  mutate(area = (height / 1000) * (width / 1000),
+         ratio = width / height) 
+
+artwork_size %>% 
+  ggplot(aes(area)) +
+  geom_histogram() +
+  scale_x_log10(labels = comma_format()) +
+  labs(x = "Area (square meters)")
+
+artwork_size %>% 
+  filter(between(ratio, .2, 5)) %>% 
+  ggplot(aes(ratio)) + 
+  geom_histogram(bins = 50) +
+  scale_x_log10(labels = comma_format()) +
+  geom_vline(xintercept = c(3 / 4, 4 / 3), linetype = "dashed", color = "red") +
+  labs(x = "Width / height ratio (log scale)",
+       title = "What are typical shapes of Tate artwork?",
+       subtitle = "Red lines show 3:4 and 4:3 ratios")
+
+artwork_size %>% 
+  mutate(shape = case_when(
+    ratio > 1.05 ~ "Landscape",
+    ratio < .95 ~ "Portrait",
+    TRUE ~ "Sqaure"
+  )) %>% 
+  count(shape, decade = 10 * (year %/% 10)) %>% 
+  complete(shape, decade, fill = list(n = 0)) %>% 
+  group_by(decade) %>% 
+  mutate(pct = n / sum(n)) %>%
+  filter(decade >= 1700) %>% 
+  ggplot(aes(decade, pct, fill = shape)) +
+  geom_area()
+
+size_by_decade <- artwork_size %>% 
+  group_by(decade = 10 * (year %/% 10)) %>% 
+  summarize(median_ratio = median(ratio),
+            median_area = median(area),
+            n = n()) %>% 
+  filter(decade >= 1700) 
+
+size_by_decade %>% 
+  ggplot(aes(decade, median_ratio)) +
+  geom_line() +
+  geom_point(aes(size = n)) +
+  labs(x = "Decade",
+       y = "Median ratio (width / height)")
+
+size_by_decade %>% 
+  ggplot(aes(decade, median_area)) +
+  geom_line() +
+  geom_point(aes(size = n)) +
+  labs(x = "Decade",
+       y = quote("Median area in meter"^2))
+
+artwork_size %>% 
+  mutate(decade = 10 * (year %/% 10)) %>% 
+  filter(decade >= 1700) %>% 
+  ggplot(aes(decade, area, group = decade)) +
+  geom_boxplot() +
+  scale_y_log10(labels = comma_format(),
+                breaks = 10 ^ seq(-3, 2))
+
+```
+
+### Artists and size
+
+```{r}
+
+artwork_size %>% 
+  group_by(artist) %>% 
+  summarize(n_pieces = n(),
+            avg_year = mean(year, na.rm = TRUE),
+            first_year = min(year, na.rm = TRUE),
+            last_year = max(year, na.rm = TRUE),
+            median_area = median(area),
+            median_ratio = median(ratio)) %>% 
+  arrange(desc(n_pieces))
+
+artwork_size %>% 
+  filter(fct_lump(artist, 25) != "Other") %>% 
+  add_count(artist) %>% 
+  mutate(artist = glue("{ artist } ({ n })")) %>% 
+  mutate(artist = fct_reorder(artist, ratio)) %>% 
+  ggplot(aes(ratio, artist)) +
+  geom_boxplot() +
+  geom_vline(xintercept = c(3 / 4, 4 / 3), linetype = "dashed", color = "red") +
+  scale_x_log10(limits = c(.25, 4)) +
+  labs(x = "Ratio (width / height)", 
+       y = "",
+       title = "What aspect ratio do artists work in?",
+       subtitle = "For the 25 most common artists in the Tate")
+
+artwork_size %>% 
+  # extract(medium, "medium_on", " on (.*)", remove = FALSE) %>% 
+  filter(fct_lump(medium, 25) != "Other") %>% 
+  add_count(medium) %>% 
+  mutate(medium = glue("{ medium } ({ n })")) %>% 
+  mutate(medium = fct_reorder(medium, ratio)) %>% 
+  ggplot(aes(ratio, medium)) +
+  geom_boxplot() +
+  geom_vline(xintercept = c(3 / 4, 4 / 3), linetype = "dashed", color = "red") +
+  scale_x_log10(limits = c(.25, 4)) +
+  labs(x = "Ratio (width / height)", 
+       y = "",
+       title = "What aspect ratio do artists work in?",
+       subtitle = "For the 25 most common mediums in the Tate")
+
+artwork_size %>% 
+  filter(fct_lump(artist, 25) != "Other") %>% 
+  add_count(artist) %>% 
+  mutate(artist = glue("{ artist } ({ n })")) %>% 
+  mutate(artist = fct_reorder(artist, ratio)) %>% 
+  ggplot(aes(ratio, artist)) +
+  geom_density_ridges() +
+  geom_vline(xintercept = c(3 / 4, 4 / 3), linetype = "dashed", color = "red") +
+  scale_x_log10(limits = c(.33, 3)) +
+  labs(x = "Ratio (width / height)", 
+       y = "",
+       title = "What aspect ratio do artists work in?",
+       subtitle = "For the 25 most common artists in the Tate")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+, 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
